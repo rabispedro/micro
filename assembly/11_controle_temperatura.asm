@@ -17,15 +17,10 @@ CBLOCK 0x20
     DEZENA
     CENTENA
     MILHAR
+    VALOR_POTENCIOMETRO
+    VALOR_DIFERENCA
     FLAGS
-    M_H
-    M_L
-    S_H
-    S_L
-    R_H
-    R_L
-    VALOR_ADC_H
-    VALOR_ADC_L
+    VALOR_ADC
     W_TEMP
     S_TEMP
 ENDC
@@ -42,9 +37,9 @@ ENDC
 #define D_DEZENA PORTB, 5
 #define D_CENTENA PORTB, 6
 #define D_MILHAR PORTB, 7
-#define FAN PORTC, 1
 #define HEATER PORTC, 2
-    
+#define FAN PORTC, 1 
+
 ; constantes
 V_TMR0 equ .131
 V_TEMPO_1S equ .10
@@ -52,7 +47,8 @@ V_TEMPO_1S equ .10
 ; variáveis
  #define FIM_1S FLAGS, 0
  #define FIM_8MS FLAGS, 1
- #define NEGATIVO FLAGS, 2
+ #define E_POTENCIOMETRO FLAGS, 2
+ #define E_CONTROLE FLAGS, 3
  
 ; void setup()
 RES_VECT  CODE    0x0000            ; processor reset vector
@@ -115,10 +111,11 @@ START
     MOVLW 0xF
     MOVWF TRISB
     
+    BCF FAN
     BCF HEATER
     
     ; Configurando ADCCONS1
-    MOVLW B'10000100'
+    MOVLW B'00000100'
     ; bit 7: ADFM - justificado à direita
     ; bit 6: ADCS2 - configuração do clock do conversor (clock interno)
     ; bit 5..4: bits não usados
@@ -156,11 +153,19 @@ START
     CLRF DEZENA	; dezena = 0
     CLRF CENTENA	; centeza = 0
     CLRF MILHAR	; milhar = 0
-    
+
     MOVLW V_TEMPO_1S
     MOVWF TEMPO_1S ; tempo_1s = 125
     
-    CLRF FLAGS	; fim_1s = fim_8ms = negativo = false
+    CLRF FLAGS	; fim_1s = fim_8ms = estado_potenciometro = false
+    BCF FAN
+    BCF HEATER
+    
+    ; estado_inicial => potenciometro ligado
+    MOVLW .1
+    MOVWF MILHAR
+    
+    BSF E_POTENCIOMETRO	;  estado_potenciometro = true
     
     CLRF PORTB	; apagar todo o  display de 7 segmentos
     
@@ -199,25 +204,64 @@ MAIN
     BTFSC ADCON0, GO ; if(!go), ou seja, testa se a conversão acabou
     GOTO $-1	; se não acabou, testa novamente
     
-    MOVF ADRESH, W  ; w = adresh
-    MOVWF VALOR_ADC_H ; valor_adc = adresh
+    MOVF ADRESL, W  ; w = adresl
+    MOVWF VALOR_ADC ; valor_adc = adres_low
     
-    BANK1
-    MOVF ADRESL, W
+    BTFSC E_POTENCIOMETRO
+    MOVWF VALOR_POTENCIOMETRO	; valor_potenciometro = valor_adc
     
-    BANK0
-    MOVWF VALOR_ADC_L
+    BTFSC E_CONTROLE    ; se controle estiver ligado, testa FAN
+    CALL TESTA_FAN
+    
     CLRF DEZENA
     CLRF CENTENA
-    CLRF MILHAR
     
-    GOTO TESTAR_MILHAR
+    GOTO TESTAR_CENTENA
+
+TESTA_FAN
+;    BTFSC E_POTENCIOMETRO   ; se potenciometro = true, retorna
+;    RETURN
+    
+    ; 88 => 0101 1000
+    ; 32 => 0010 0000
+    ; --------------
+    ; 56 =>  0011 1000
+    ; 
+    ; 56 - 32 => 24
+    
+    MOVF VALOR_POTENCIOMETRO, W	; w = valor_potenciometro
+    MOVWF VALOR_DIFERENCA
+    
+    MOVF VALOR_ADC, W	; w = valor_adc
+    SUBWF VALOR_DIFERENCA, W	; valor_diferenca = valor_potenciometro - valor_adc
+    
+    BTFSC STATUS, C ; if (valor_potenciometro - valor_adc < 0)
+    GOTO SOBE_TEMPERATURA
+    
+    GOTO DESCE_TEMPERATURA
+    
+SOBE_TEMPERATURA
+    BSF HEATER
+    BCF FAN
+    
+    RETURN
+    
+DESCE_TEMPERATURA
+    BCF HEATER
+    BSF FAN
+    
+    RETURN
     
 B_ACIONA_SENSOR_PRESSIONADO
     BCF ADCON0, GO
     
     MOVLW B'11000001'
     MOVWF ADCON0
+    
+    MOVLW .0
+    MOVWF MILHAR
+    
+    BCF E_POTENCIOMETRO	; estado_potenciometro = false
     
     GOTO MAIN
     
@@ -227,126 +271,60 @@ B_ACIONA_POTENCIOMETRO_PRESSIONADO
     MOVLW B'11001001'
     MOVWF ADCON0
     
+    MOVLW .1
+    MOVWF MILHAR
+    
+    BSF E_POTENCIOMETRO	;  estado_potenciometro = true
+    BCF E_CONTROLE
+    
     GOTO MAIN
 
 B_LIGA_HEATER_PRESSIONADO
-    BSF HEATER
+    BSF E_CONTROLE
+    BCF HEATER
+    BCF FAN
     
     GOTO MAIN
 
 B_DESLIGA_HEATER_PRESSIONADO
+    BCF E_CONTROLE
     BCF HEATER
+    BCF FAN
     
     GOTO MAIN
     
-TESTAR_MILHAR
-    MOVLW 0x03
-    MOVWF S_H
-    
-    MOVLW 0xE8
-    MOVWF S_L
-    
-    MOVF VALOR_ADC_H, W
-    MOVWF M_H
-    
-    MOVF VALOR_ADC_L, W
-    MOVWF M_L
-    
-    CALL SUBTRACAO_16BITS
-    
-    BTFSC NEGATIVO
-    GOTO TESTAR_CENTENA
-    
-    MOVF R_H, W
-    MOVWF VALOR_ADC_H
-    
-    MOVF R_L, W
-    MOVWF VALOR_ADC_L
-    
-    INCF MILHAR, F
-    
-    GOTO TESTAR_MILHAR
-
 TESTAR_CENTENA
-    MOVLW 0x00
-    MOVWF S_H
+    MOVLW .100	; w = 100
     
-    MOVLW 0x64
-    MOVWF S_L
+    SUBWF VALOR_ADC, W	; w = valor_adc - 100
     
-    MOVF VALOR_ADC_H, W
-    MOVWF M_H
-    
-    MOVF VALOR_ADC_L, W
-    MOVWF M_L
-    
-    CALL SUBTRACAO_16BITS
-    
-    BTFSC NEGATIVO
+    BTFSS STATUS, C ; if (valor_adc - 100 > 0)
     GOTO TESTAR_DEZENA
     
-    MOVF R_H, W
-    MOVWF VALOR_ADC_H
-    
-    MOVF R_L, W
-    MOVWF VALOR_ADC_L
-    
-    INCF CENTENA, F
+    MOVWF VALOR_ADC	; valor_adc = (valor_adc - 100)
+    INCF CENTENA, F		; centena++
     
     GOTO TESTAR_CENTENA
     
 TESTAR_DEZENA
     MOVLW .10	; w = 10
     
-    SUBWF VALOR_ADC_L, W	; w = valor_adc - 10
+    SUBWF VALOR_ADC, W	; w = valor_adc - 10
     
     BTFSS STATUS, C ; if (valor_adc - 10 > 0)
     GOTO TESTAR_UNIDADE
     
-    MOVWF VALOR_ADC_L	; valor_adc = (valor_adc - 10)
+    MOVWF VALOR_ADC	; valor_adc = (valor_adc - 10)
     INCF DEZENA, F		; dezena++
     
     GOTO TESTAR_DEZENA
 
 TESTAR_UNIDADE
-    MOVF VALOR_ADC_L, W	; w = valor_adc
+    MOVF VALOR_ADC, W	; w = valor_adc
     
     MOVWF UNIDADE		; unidade = w
     
     GOTO MAIN
-    
-SUBTRACAO_16BITS
-    BCF NEGATIVO
-    
-    MOVF S_L, W
-    SUBWF M_L, W
-    MOVWF R_L
-   
-    BTFSS STATUS, C
-    BSF NEGATIVO
-    
-    MOVF S_H, W
-    SUBWF M_H, W
-    MOVWF R_H
-   
-    BTFSS STATUS, C
-    GOTO EH_NEGATIVO
-    
-    BTFSS NEGATIVO
-    RETURN
-    
-    MOVLW .1
-    SUBWF R_H, F
-    
-    BTFSS STATUS, C
-    GOTO EH_NEGATIVO
-    
-    BCF NEGATIVO
-    RETURN
-    
-EH_NEGATIVO
-    BSF NEGATIVO
-    RETURN
     
 TROCA_DISPLAY
     BCF FIM_8MS	; fim_8ms = false
