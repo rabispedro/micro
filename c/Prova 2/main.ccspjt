@@ -1,0 +1,19 @@
+[PROJECT]
+Target=main.hex
+Processor_Text=PIC16F877A
+CCSVerions=5.076
+Compiler=PCM
+CCSVersion=5.076
+[Target Data]
+FileList=main.c
+[Directories]
+Include=
+[C:\users\rabis\Projetos PICCS\Programas Diversos\Programa 2\main]
+Type=4
+[mru-list]
+1=main.c
+[main.c]
+Type=4
+[Units]
+Count=1
+1=main (main)
